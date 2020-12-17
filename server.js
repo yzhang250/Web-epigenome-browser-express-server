@@ -109,17 +109,20 @@ app.get("/api/snp/:rsid", (req, res) => {
 
 
 
-// fetch disease data from disease collection, which is basically gwas catalog info
+// fetch disease data from disease collection, which is basically gwas catalog info, then, use the snp list to get all snps
+// using async - await is much clearer than previous callback format, this can be used as a template for future API dev
+// this will also needed to be updated since we have a new snp data fetching mechanism using promoter table 
 app.get("/api/disease/:disease", async (req, res, next) => {
-  // console.log(req.params.rsid)
   try {
+    // get data from disease table
     const disease = await Disease2SNP.findOne({ "trait": req.params.disease })
 
+    // this is basically the old version of SNP data fetching. Need to be updated in the future.
     const snps = await dbSNP153_Annotation.find({ "RSID": { "$in": disease.toJSON().SNPs } })
+
+    // send data to whoever calls this API
     res.send(snps)
   } catch (error) {
-    //console.error(error);
-    //res.json({success: false, error: error.message});
     next(error);
   }
 });
@@ -128,51 +131,42 @@ app.get("/api/disease/:disease", async (req, res, next) => {
 app.get("/api/gene/:gene", async (req, res, next) => {
   // console.log(req.params.rsid)
   try {
-    // let entries = []
-    // const gene = await Gene2SNP.findOne({ "gene": req.params.gene })
-
-    // const snps_promoter = await dbSNP153_Annotation.find({ "RSID": { "$in": gene.toJSON().promoter_snps } })
-    // const snps_distal = await dbSNP153_Annotation.find({
-    //   "RSID": {
-    //     "$in": gene.toJSON().distal_snps
-    //     // .slice(0, 10)  
-    //   }
-    // })
-    // const snps = snps_promoter.concat(snps_distal)
-
+    // get gene data from Baikang's gene table for the summary card info. i.e. full name, alias....
     const gene = await Gene.findOne({ "gene_symbol": req.params.gene })
+
+    // get promtoer info from Ming-Ju's promoter table by gene name.
     const promoters = await Promoter.find({ "Gene": req.params.gene })
 
+    // package both info as a single json obj and send to the frontend.
     let response = { gene: gene, promoters: promoters }
 
     res.send(response)
   } catch (error) {
-    //console.error(error);
-    //res.json({success: false, error: error.message});
     next(error);
   }
 });
 
 // fetch data by using coordinates, cell type info is needed in the req
 app.get("/api/range/:coordinates", async (req, res, next) => {
-  // console.log(req.params.rsid)
+
+
   let coordinates = req.params.coordinates
-  // parseInt needs to be removed and have all chr onverted to str  
+  // parse the coordinates 
+  // parseInt needs to be removed and have all chr onverted to str, note: this is some inconsistancy between the datatype between different table, i.e. chr is a numeric dt in a table, but a char in another table 
   let chr = parseInt(coordinates.split(":")[0]);
   let tmp = coordinates.split(":")[1];
   let start = parseInt(tmp.split("-")[0])
   let end = parseInt(tmp.split("-")[1])
 
+  // use the parsed info to craete the query 
   let myquery = { "$and": [{ "Start": { "$gt": start } }, { "Start": { "$lt": end } }, { "Chr": chr }] }
 
   try {
-    // let entries = []
+    
 
     const snps = await dbSNP153_Annotation.find(myquery)
-    // const snps_distal = await dbSNP153_Annotation.find({ "RSID": { "$in": gene.toJSON().distal_snps
-    // .slice(0, 10)  
-    // } })
-
+    
+    // create the content, which will be store in the file sent from API call 
     let content = "RSID,Chr,Start,End,Ref,Alt\n"
     for (let snp of snps) {
       let entry = JSON.parse(JSON.stringify(snp))
@@ -180,19 +174,17 @@ app.get("/api/range/:coordinates", async (req, res, next) => {
         content += entry[key] + ","
       }
       content += "\n"
-      // rsids.push(["RSID"])
+      
     }
-    console.log(content)
+    // console.log(content)
 
     fs.writeFile(`SNPs_chr${chr}:${start}-${end}.csv`, content, function (err) {
       if (err) throw err;
       console.log('File is created successfully.');
-      // res.send(snps)
+      // This is the behaviour let user directly download the csv file by calling api
       res.download(`./SNPs_chr${chr}:${start}-${end}.csv`);
     });
   } catch (error) {
-    //console.error(error);
-    //res.json({success: false, error: error.message});
     next(error);
   }
 });
@@ -203,7 +195,10 @@ app.get("/api/snp2promoter/:rsid", async (req, res) => {
   try {
     const snps = await dbSNP153_Annotation.find({ "RSID": req.params.rsid})
     
+    // get one of the sighic data, given the snp rsid is fixed, the interacting bin info should be the same
     let SigHiC_NHCFV = snps[0].toJSON()["SigHiC_NHCFV"]
+
+    // parse to get reg bin and promoter bin info
     let reg_bin_Re = RegExp('RegulatoryBin:(.*?);')
     let reg = reg_bin_Re.exec(SigHiC_NHCFV)[1]
     
@@ -211,6 +206,7 @@ app.get("/api/snp2promoter/:rsid", async (req, res) => {
     let prom_bin = prom_bin_Re.exec(SigHiC_NHCFV)[1]
     let proms = prom_bin.split(",")
 
+    // get promoter info from the promoter table from Ming-Ju 
     const promoters = await Promoter.find({ "$and": [{ "HiC_Distal_bin": reg}, { "HiC_Promoter_bin": { "$in": proms }}]})
 
     res.send(promoters)
@@ -218,8 +214,7 @@ app.get("/api/snp2promoter/:rsid", async (req, res) => {
 
     // res.send(snps)
   } catch (error) {
-    //console.error(error);
-    //res.json({success: false, error: error.message});
+    
     console.log(error);
   }
 });
