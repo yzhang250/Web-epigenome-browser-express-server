@@ -7,6 +7,7 @@ const mongoose = require("mongoose");
 const Schema = require('mongoose').Schema;
 const app = express();
 const fs = require('fs');
+const { METHODS } = require("http");
 
 
 
@@ -29,7 +30,7 @@ mongoose
   .then(() => console.log('MongoDB Connected...'))
   .catch(err => console.log(err));
 
-//Define a schema
+//Define schemas for the following models
 var AnnotationSchema = new Schema({
   // _id: Schema.Types.ObjectId, 
   // RSID: String,
@@ -59,6 +60,8 @@ var PromoterSchema = new Schema({
 },
   { collection: 'Promoter' });
 
+
+// Create models for the different table, models server as a middle layer operatable instance between db and js  
 let dbSNP153_Annotation = mongoose.model('dbSNP153_Annotation', AnnotationSchema);
 
 let Disease2SNP = mongoose.model('Disease2SNP', Disease2SNPSchema);
@@ -80,9 +83,10 @@ const getBinIDs = (chr, start, end, resolution) => {
 }
 
 
-// CORS-enabled for all origins
+// CORS-enabled for all origins, needed for public availability
 app.use(cors())
 
+// a send file example, not used in the API, but kept for future reference
 app.get("/api/tfprinting/", (req, res) => {
 
   res.sendFile(
@@ -90,33 +94,10 @@ app.get("/api/tfprinting/", (req, res) => {
   )
 })
 
-app.get("/api/snp2promoter/:rsid", async (req, res) => {
-  try {
-    const snps = await dbSNP153_Annotation.find({ "RSID": req.params.rsid})
-    
-    let SigHiC_NHCFV = snps[0].toJSON()["SigHiC_NHCFV"]
-    let reg_bin_Re = RegExp('RegulatoryBin:(.*?);')
-    let reg = reg_bin_Re.exec(SigHiC_NHCFV)[1]
-    
-    let prom_bin_Re = RegExp('PromoterBin:(.*?)$')
-    let prom_bin = prom_bin_Re.exec(SigHiC_NHCFV)[1]
-    let proms = prom_bin.split(",")
-
-    const promoters = await Promoter.find({ "$and": [{ "HiC_Distal_bin": reg}, { "HiC_Promoter_bin": { "$in": proms }}]})
-
-    res.send(promoters)
-
-
-    // res.send(snps)
-  } catch (error) {
-    //console.error(error);
-    //res.json({success: false, error: error.message});
-    console.log(error);
-  }
-});
 
 
 
+// fetch SNP data from the snp table, this is the old version, since we will change to using the promoter table, this will be deprecated
 app.get("/api/snp/:rsid", (req, res) => {
   // console.log(req.params.rsid)
   dbSNP153_Annotation.find({ "RSID": req.params.rsid }, (err, snp) => {
@@ -127,8 +108,8 @@ app.get("/api/snp/:rsid", (req, res) => {
 
 
 
-// collection.find({"RSID": { "$in": [ "rs554551566", "rs1414996067" ] }})
-// fetch disease data
+
+// fetch disease data from disease collection, which is basically gwas catalog info
 app.get("/api/disease/:disease", async (req, res, next) => {
   // console.log(req.params.rsid)
   try {
@@ -143,7 +124,7 @@ app.get("/api/disease/:disease", async (req, res, next) => {
   }
 });
 
-// fetch data re the gene and cell line
+// fetch data by the gene, cell type info is needed in the req
 app.get("/api/gene/:gene", async (req, res, next) => {
   // console.log(req.params.rsid)
   try {
@@ -172,7 +153,7 @@ app.get("/api/gene/:gene", async (req, res, next) => {
   }
 });
 
-// fetch data re the gene and cell line
+// fetch data by using coordinates, cell type info is needed in the req
 app.get("/api/range/:coordinates", async (req, res, next) => {
   // console.log(req.params.rsid)
   let coordinates = req.params.coordinates
@@ -217,5 +198,32 @@ app.get("/api/range/:coordinates", async (req, res, next) => {
 });
 
 
+// Unfinished new snp data fetch METHODS, need to pass back the promoters and snp info in a whole obj, cell type info is needed in the req
+app.get("/api/snp2promoter/:rsid", async (req, res) => {
+  try {
+    const snps = await dbSNP153_Annotation.find({ "RSID": req.params.rsid})
+    
+    let SigHiC_NHCFV = snps[0].toJSON()["SigHiC_NHCFV"]
+    let reg_bin_Re = RegExp('RegulatoryBin:(.*?);')
+    let reg = reg_bin_Re.exec(SigHiC_NHCFV)[1]
+    
+    let prom_bin_Re = RegExp('PromoterBin:(.*?)$')
+    let prom_bin = prom_bin_Re.exec(SigHiC_NHCFV)[1]
+    let proms = prom_bin.split(",")
 
+    const promoters = await Promoter.find({ "$and": [{ "HiC_Distal_bin": reg}, { "HiC_Promoter_bin": { "$in": proms }}]})
+
+    res.send(promoters)
+
+
+    // res.send(snps)
+  } catch (error) {
+    //console.error(error);
+    //res.json({success: false, error: error.message});
+    console.log(error);
+  }
+});
+
+// Enble the application listen to port, which is 8080, by default(defined above)
 app.listen(port, () => { console.log(`running on port ${port}`) })
+
