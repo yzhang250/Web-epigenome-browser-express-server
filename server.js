@@ -15,7 +15,7 @@ const port = process.env.PORT || 8080;
 
 // DB Config
 mongo_ip = "localhost";
-mongo_port = "27017"
+mongo_port = "27018"
 DB_NAME = "TableView"
 MONGO_URI = `${mongo_ip}:${mongo_port}`
 const db_URI = `mongodb://${MONGO_URI}/${DB_NAME}`;
@@ -46,40 +46,39 @@ var AnnotationSchema = new Schema({
   { collection: 'dbSNP153_Annotation' });
 
 var Disease2SNPSchema = new Schema({
-  // _id: Schema.Types.ObjectId, 
-  // RSID: String,
-  // Chr: Number, 
-  // Start: Number, 
-  // End: Number, 
-  // Ref: String, 
-  // Alt: String,
-  // Region:String,
-  // GeneName_ID_Ensembl: String,
-  // AAChange_Ensembl: String,
-  // gwasCatalog: String
 },
   { collection: 'Disease2SNP' });
 
 
-var Gene2SNPSchema = new Schema({
-  // _id: Schema.Types.ObjectId, 
-  // RSID: String,
-  // Chr: Number, 
-  // Start: Number, 
-  // End: Number, 
-  // Ref: String, 
-  // Alt: String,
-  // Region:String,
-  // GeneName_ID_Ensembl: String,
-  // AAChange_Ensembl: String,
-  // gwasCatalog: String
+var GeneSchema = new Schema({
 },
-  { collection: 'gene2snps' });
+  { collection: 'gene' });
+
+var PromoterSchema = new Schema({
+
+},
+  { collection: 'Promoter' });
 
 let dbSNP153_Annotation = mongoose.model('dbSNP153_Annotation', AnnotationSchema);
 
 let Disease2SNP = mongoose.model('Disease2SNP', Disease2SNPSchema);
-let Gene2SNP = mongoose.model('Gene2SNP', Gene2SNPSchema);
+
+let Gene = mongoose.model('gene', GeneSchema);
+
+let Promoter = mongoose.model('Promoter', PromoterSchema);
+
+// get bin id list from a promoter range
+const getBinIDs = (chr, start, end, resolution) => {
+  let ret = []
+  let s = parseInt(start / resolution) * resolution
+  let e = parseInt(start / resolution) * resolution + resolution
+  while (s != e) {
+    ret.push(`${chr}:${s}-${s + resolution}`)
+    s += resolution
+  }
+  return ret
+}
+
 
 // CORS-enabled for all origins
 app.use(cors())
@@ -91,6 +90,33 @@ app.get("/api/tfprinting/", (req, res) => {
   )
 })
 
+app.get("/api/snp2promoter/:rsid", async (req, res) => {
+  try {
+    const snps = await dbSNP153_Annotation.find({ "RSID": req.params.rsid})
+    
+    let SigHiC_NHCFV = snps[0].toJSON()["SigHiC_NHCFV"]
+    let reg_bin_Re = RegExp('RegulatoryBin:(.*?);')
+    let reg = reg_bin_Re.exec(SigHiC_NHCFV)[1]
+    
+    let prom_bin_Re = RegExp('PromoterBin:(.*?)$')
+    let prom_bin = prom_bin_Re.exec(SigHiC_NHCFV)[1]
+    let proms = prom_bin.split(",")
+
+    const promoters = await Promoter.find({ "$and": [{ "HiC_Distal_bin": reg}, { "HiC_Promoter_bin": { "$in": proms }}]})
+
+    res.send(promoters)
+
+
+    // res.send(snps)
+  } catch (error) {
+    //console.error(error);
+    //res.json({success: false, error: error.message});
+    console.log(error);
+  }
+});
+
+
+
 app.get("/api/snp/:rsid", (req, res) => {
   // console.log(req.params.rsid)
   dbSNP153_Annotation.find({ "RSID": req.params.rsid }, (err, snp) => {
@@ -98,6 +124,8 @@ app.get("/api/snp/:rsid", (req, res) => {
     res.send(snp);
   })
 });
+
+
 
 // collection.find({"RSID": { "$in": [ "rs554551566", "rs1414996067" ] }})
 // fetch disease data
@@ -120,17 +148,23 @@ app.get("/api/gene/:gene", async (req, res, next) => {
   // console.log(req.params.rsid)
   try {
     // let entries = []
-    const gene = await Gene2SNP.findOne({ "gene": req.params.gene })
+    // const gene = await Gene2SNP.findOne({ "gene": req.params.gene })
 
-    const snps_promoter = await dbSNP153_Annotation.find({ "RSID": { "$in": gene.toJSON().promoter_snps } })
-    const snps_distal = await dbSNP153_Annotation.find({
-      "RSID": {
-        "$in": gene.toJSON().distal_snps
-        // .slice(0, 10)  
-      }
-    })
-    const snps = snps_promoter.concat(snps_distal)
-    res.send(snps)
+    // const snps_promoter = await dbSNP153_Annotation.find({ "RSID": { "$in": gene.toJSON().promoter_snps } })
+    // const snps_distal = await dbSNP153_Annotation.find({
+    //   "RSID": {
+    //     "$in": gene.toJSON().distal_snps
+    //     // .slice(0, 10)  
+    //   }
+    // })
+    // const snps = snps_promoter.concat(snps_distal)
+
+    const gene = await Gene.findOne({ "gene_symbol": req.params.gene })
+    const promoters = await Promoter.find({ "Gene": req.params.gene })
+
+    let response = { gene: gene, promoters: promoters }
+
+    res.send(response)
   } catch (error) {
     //console.error(error);
     //res.json({success: false, error: error.message});
@@ -161,7 +195,7 @@ app.get("/api/range/:coordinates", async (req, res, next) => {
     let content = "RSID,Chr,Start,End,Ref,Alt\n"
     for (let snp of snps) {
       let entry = JSON.parse(JSON.stringify(snp))
-      for (let key of ["RSID","Chr","Start","End","Ref","Alt"]){
+      for (let key of ["RSID", "Chr", "Start", "End", "Ref", "Alt"]) {
         content += entry[key] + ","
       }
       content += "\n"
@@ -173,7 +207,7 @@ app.get("/api/range/:coordinates", async (req, res, next) => {
       if (err) throw err;
       console.log('File is created successfully.');
       // res.send(snps)
-      res.download(`./SNPs_chr${chr}:${start}-${end}.csv`); 
+      res.download(`./SNPs_chr${chr}:${start}-${end}.csv`);
     });
   } catch (error) {
     //console.error(error);
